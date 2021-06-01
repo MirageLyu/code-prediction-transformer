@@ -7,6 +7,7 @@
 
 import math
 import multiprocessing as mp
+import re
 
 from tqdm import tqdm
 
