@@ -1,27 +1,3 @@
-#!/usr/bin/env python3
-# Copyright (c) 2019 OpenAI, HugginFace Inc. team. and TaeHwan Jung
-# Copyright (c) Facebook, Inc. and its affiliates.
-# ----------------------------------------------------------------------------
-# MIT LICENSE
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-# ----------------------------------------------------------------------------
 """
     Transformer model is adapted from: https://github.com/graykode/gpt-2-Pytorch
         (Commit: 46ae886391a94c6683be438269252c4afd5ba762)
@@ -32,9 +8,25 @@
 
 import copy
 import math
+import json
+import pickle
 
+import multiprocessing
+from gensim.models import Word2Vec
 import torch
 import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from sklearn.model_selection import train_test_split
+from time import time
+
+device = torch.device("cpu")
+# if torch.cuda.is_available():
+#     device = torch.device("cuda")
+#     print(f"There are {torch.cuda.device_count()} GPU(s) available.")
+#     print("Device name: " + torch.cuda.get_device_name(0))
+# else:
+#     print("No GPU available, using CPU instead.")
+#     device = torch.device("cpu")
 
 
 def gelu(x):
@@ -198,9 +190,10 @@ class GPT2Model(nn.Module):
     def forward(self, input_ids, paths=None):
         input_shape = input_ids.size()
         input_ids = input_ids.view(-1, input_ids.size(-1))
-        inputs_embeds = self.wte(input_ids)
         path_embeds = self.path_lstm(paths) if paths is not None else 0
+        inputs_embeds = self.wte(input_ids)
         hidden_states = inputs_embeds + path_embeds
+        print(hidden_states.shape)
 
         for block in self.h:
             hidden_states = block(hidden_states)
@@ -271,6 +264,126 @@ class TransformerModel(nn.Module):
             ids += [i * max_len + j for j in range(ext_i, max_len)]
         loss = self.loss_fn(y_pred.view(-1, y_pred.size(-1))[ids], y.view(-1)[ids])
         return loss
+
+def initialize_model(vocab_size, n_layer=6, n_embed=300, n_ctx=1000, n_head=6, layer_norm_epsilon=1e-6, root_path=False):
+    return TransformerModel(vocab_size, loss_fn, n_layer, n_embed, n_ctx, n_head, layer_norm_epsilon, root_path).to(device)
+
+def load_dps():
+    f = open("/tmp/dps.txt", "r")
+    lines = f.read().splitlines()[:100]
+    dps = [json.loads(l) for l in lines]
+    return dps
+
+def load_ids():
+    f = open("/tmp/ids.txt", "r")
+    lines = f.read().splitlines()
+    ids = [json.loads(l) for l in lines]
+    return ids
+
+def load_vocab():
+    vocab = pickle.load(open("/tmp/vocab.pkl", "rb"))
+    return vocab
+
+# model = Word2Vec(sentences=[vocab], min_count=1)
+# print("Saving w2v model...")
+# model.save("/tmp/w2v.model")
+# print("w2v model saved.")
+w2v_model = Word2Vec.load("/tmp/w2v.model")
+def word2vec(word):
+    if w2v_model.wv.has_index_for(word):
+        return w2v_model.wv[word]
+    return w2v_model.wv['<unk_token>']
+
+def sequence_embedding_word2vec(seq):
+    return [word2vec(word) for word in seq]
+
+def sequence_embedding_index(seq, word_dict):
+    result = []
+    for word in seq:
+        if word in word_dict.keys():
+            result.append(word_dict[word])
+        else:
+            result.append(word_dict['<unk_token>'])
+    return result
+
+def pad_input_sequence_index(sequences, word_dict):
+    max_len = max([len(seq) for seq in sequences])
+    for i, seq in enumerate(sequences):
+        while(len(sequences[i]) < max_len):
+            sequences[i].append(word_dict['<pad_token>'])
+    return sequences
+
+def pad_input_sequence(sequences):
+    max_len = max([len(seq) for seq in sequences])
+    for i, seq in enumerate(sequences):
+        while(len(sequences[i]) < max_len):
+            sequences[i].append(word2vec('<pad_token>'))
+    return sequences
+
+loss_fn = nn.CrossEntropyLoss()
+
+def train(model, train_dataloader, epochs=5):
+    for epoch_i in range(epochs):
+        print("Epoch " + str(epoch_i) + " is running....")
+        t0_epoch, t0_batch = time(), time()
+        total_loss, batch_loss, batch_count = 0, 0, 0
+        model.train()
+
+        for step, batch in enumerate(train_dataloader):
+            batch_count += 1
+            b_input_ids, b_labels = tuple(t.to(device) for t in batch)
+            y_pred = model(b_input_ids, b_labels, return_loss=False)
+
+            loss = loss_fn(y_pred, b_labels)
+            batch_loss += loss.item()
+            total_loss += loss.item()
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            if (step % 20 == 0 and step != 0) or (step == len(train_dataloader)-1):
+                time_elapsed = time() - t0_batch
+                print("Batch Loss: ", batch_loss)
+                print("Total Loss: ", total_loss)
+                batch_loss, batch_count = 0, 0
+                t0_batch = time()
+
+        avg_train_loss = total_loss / len(train_dataloader)
+    print("Training Complete..")
+
+
+
+def eval(model, val_dataloader):
+    pass
+
+if __name__ == '__main__':
+    dps = load_dps()
+    ids = load_ids()
+    vocab = load_vocab()
+    vocab_len = len(vocab)
+    vocab_dict = dict(zip(load_vocab(), range(vocab_len)))
+    embed_vocab = [word2vec(word) for word in vocab]
+    embed_vocab_dict = dict(zip(vocab, embed_vocab))
+
+    X = torch.tensor(pad_input_sequence_index([sequence_embedding_index(seq[0], vocab_dict) for seq in dps], \
+                                              vocab_dict))
+    y = torch.Tensor([seq[1] for seq in dps])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2021)
+
+    batch_size = 32
+
+    train_data = TensorDataset(X_train, y_train)
+    train_sampler = RandomSampler(X_train)
+    train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
+
+    test_data = TensorDataset(X_test, y_test)
+    test_sampler = SequentialSampler(X_test)
+    test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
+
+    model = initialize_model(vocab_size=len(vocab))
+    train(model, train_dataloader, epochs=10)
+
 
 
 # base RNN model
