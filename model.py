@@ -193,8 +193,6 @@ class GPT2Model(nn.Module):
         path_embeds = self.path_lstm(paths) if paths is not None else 0
         inputs_embeds = self.wte(input_ids)
         hidden_states = inputs_embeds + path_embeds
-        print(hidden_states.shape)
-
         for block in self.h:
             hidden_states = block(hidden_states)
         hidden_states = self.ln_f(hidden_states)
@@ -270,7 +268,7 @@ def initialize_model(vocab_size, n_layer=6, n_embed=300, n_ctx=1000, n_head=6, l
 
 def load_dps():
     f = open("/tmp/dps.txt", "r")
-    lines = f.read().splitlines()[:100]
+    lines = f.read().splitlines()[:10]
     dps = [json.loads(l) for l in lines]
     return dps
 
@@ -296,7 +294,6 @@ def word2vec(word):
 
 def sequence_embedding_word2vec(seq):
     return [word2vec(word) for word in seq]
-
 def sequence_embedding_index(seq, word_dict):
     result = []
     for word in seq:
@@ -305,14 +302,12 @@ def sequence_embedding_index(seq, word_dict):
         else:
             result.append(word_dict['<unk_token>'])
     return result
-
 def pad_input_sequence_index(sequences, word_dict):
     max_len = max([len(seq) for seq in sequences])
     for i, seq in enumerate(sequences):
         while(len(sequences[i]) < max_len):
             sequences[i].append(word_dict['<pad_token>'])
     return sequences
-
 def pad_input_sequence(sequences):
     max_len = max([len(seq) for seq in sequences])
     for i, seq in enumerate(sequences):
@@ -333,7 +328,7 @@ def train(model, train_dataloader, epochs=5):
             batch_count += 1
             b_input_ids, b_labels = tuple(t.to(device) for t in batch)
             y_pred = model(b_input_ids, b_labels, return_loss=False)
-
+            y_pred = torch.max(y_pred, -1)[0]
             loss = loss_fn(y_pred, b_labels)
             batch_loss += loss.item()
             total_loss += loss.item()
@@ -365,9 +360,12 @@ if __name__ == '__main__':
     embed_vocab = [word2vec(word) for word in vocab]
     embed_vocab_dict = dict(zip(vocab, embed_vocab))
 
+    print("Vocabulary size: " + str(vocab_len))
+
     X = torch.tensor(pad_input_sequence_index([sequence_embedding_index(seq[0], vocab_dict) for seq in dps], \
                                               vocab_dict))
     y = torch.Tensor([seq[1] for seq in dps])
+    y = y.type(torch.LongTensor)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2021)
 
@@ -377,6 +375,7 @@ if __name__ == '__main__':
     train_sampler = RandomSampler(X_train)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
+    print(y_train)
     test_data = TensorDataset(X_test, y_test)
     test_sampler = SequentialSampler(X_test)
     test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)

@@ -17,7 +17,7 @@ from utils import file_tqdm, get_dfs
 logging.basicConfig(level=logging.INFO)
 
 
-UNK = "<unk_token>"
+UNK = "_"
 PAD = "<pad_token>"
 
 
