@@ -19,14 +19,14 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler, Sequentia
 from sklearn.model_selection import train_test_split
 from time import time
 
-device = torch.device("cpu")
-# if torch.cuda.is_available():
-#     device = torch.device("cuda")
-#     print(f"There are {torch.cuda.device_count()} GPU(s) available.")
-#     print("Device name: " + torch.cuda.get_device_name(0))
-# else:
-#     print("No GPU available, using CPU instead.")
-#     device = torch.device("cpu")
+# device = torch.device("cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print(f"There are {torch.cuda.device_count()} GPU(s) available.")
+    print("Device name: " + torch.cuda.get_device_name(0))
+else:
+    print("No GPU available, using CPU instead.")
+    device = torch.device("cpu")
 
 
 def gelu(x):
@@ -247,28 +247,22 @@ class TransformerModel(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(
-        self, x, y, ext=None, paths=None, return_loss=False
+        self, x, ext=None, paths=None, return_loss=False
     ):
         hidden_states = self.transformer(x, paths)
         y_pred = self.lm_head(hidden_states)
         if not return_loss:
             return y_pred
 
-        # ext contains a list of idx of where to take the loss from
-        # we linearize it first
-        ids = []
-        max_len = y.size(-1)
-        for i, ext_i in enumerate(ext):
-            ids += [i * max_len + j for j in range(ext_i, max_len)]
-        loss = self.loss_fn(y_pred.view(-1, y_pred.size(-1))[ids], y.view(-1)[ids])
-        return loss
 
 def initialize_model(vocab_size, n_layer=6, n_embed=300, n_ctx=1000, n_head=6, layer_norm_epsilon=1e-6, root_path=False):
-    return TransformerModel(vocab_size, loss_fn, n_layer, n_embed, n_ctx, n_head, layer_norm_epsilon, root_path).to(device)
+    model = TransformerModel(vocab_size, loss_fn, n_layer, n_embed, n_ctx, n_head, layer_norm_epsilon, root_path).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, eps=1e-8)
+    return model, optimizer
 
 def load_dps():
     f = open("/tmp/dps.txt", "r")
-    lines = f.read().splitlines()[:10]
+    lines = f.read().splitlines()
     dps = [json.loads(l) for l in lines]
     return dps
 
@@ -317,7 +311,7 @@ def pad_input_sequence(sequences):
 
 loss_fn = nn.CrossEntropyLoss()
 
-def train(model, train_dataloader, epochs=5):
+def train(model, optimizer, train_dataloader, epochs=5):
     for epoch_i in range(epochs):
         print("Epoch " + str(epoch_i) + " is running....")
         t0_epoch, t0_batch = time(), time()
@@ -327,18 +321,20 @@ def train(model, train_dataloader, epochs=5):
         for step, batch in enumerate(train_dataloader):
             batch_count += 1
             b_input_ids, b_labels = tuple(t.to(device) for t in batch)
+            optimizer.zero_grad()
             y_pred = model(b_input_ids, b_labels, return_loss=False)
-            y_pred = torch.max(y_pred, -1)[0]
+            y_pred = torch.mean(y_pred, 1)
             loss = loss_fn(y_pred, b_labels)
             batch_loss += loss.item()
             total_loss += loss.item()
 
             loss.backward()
+            optimizer.step()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
             if (step % 20 == 0 and step != 0) or (step == len(train_dataloader)-1):
                 time_elapsed = time() - t0_batch
-                print("Batch Loss: ", batch_loss)
+                print("Batch" + str(step) + "/" + str(len(train_dataloader)) + " Loss: ", batch_loss)
                 print("Total Loss: ", total_loss)
                 batch_loss, batch_count = 0, 0
                 t0_batch = time()
@@ -348,41 +344,76 @@ def train(model, train_dataloader, epochs=5):
 
 
 
-def eval(model, val_dataloader):
-    pass
+def eval(model, test_dataloader):
+    model.eval()
+    all_logits = []
+    for batch in test_dataloader:
+        b_input_ids, b_labels = tuple(t for t in batch)
+        y_pred = model(b_input_ids.to(device))
+        y_pred = torch.mean(y_pred, 1)
+        y_pred = torch.argmax(y_pred, dim=1)
+        all_logits.append(y_pred.cpu().numpy())
+    import torch.nn.functional as F
+    # probs = F.softmax(all_logits, dim=1).cpu()
+    return all_logits
 
 if __name__ == '__main__':
-    dps = load_dps()
-    ids = load_ids()
+    # dps = load_dps()
+    # ids = load_ids()
     vocab = load_vocab()
-    vocab_len = len(vocab)
-    vocab_dict = dict(zip(load_vocab(), range(vocab_len)))
-    embed_vocab = [word2vec(word) for word in vocab]
-    embed_vocab_dict = dict(zip(vocab, embed_vocab))
+    # vocab_len = len(vocab)
+    # vocab_dict = dict(zip(load_vocab(), range(vocab_len)))
+    # embed_vocab = [word2vec(word) for word in vocab]
+    # embed_vocab_dict = dict(zip(vocab, embed_vocab))
 
-    print("Vocabulary size: " + str(vocab_len))
+    print("Vocabulary size: " + str(len(vocab)))
 
-    X = torch.tensor(pad_input_sequence_index([sequence_embedding_index(seq[0], vocab_dict) for seq in dps], \
-                                              vocab_dict))
-    y = torch.Tensor([seq[1] for seq in dps])
-    y = y.type(torch.LongTensor)
+    # X = torch.tensor(pad_input_sequence_index([sequence_embedding_index(seq[0], vocab_dict) for seq in dps], \
+    #                                          vocab_dict))
+    # y = torch.Tensor([seq[1] for seq in dps])
+    # y = y.type(torch.LongTensor)
+
+    import pickle
+    # pickle.dump(X, open("X.pkl", "wb"))
+    # pickle.dump(y, open("y.pkl", "wb"))
+    # print("Dumps X, y to disk finished.")
+    print("Loading X, y from disk...")
+    X = pickle.load(open("X.pkl", "rb"))
+    y = pickle.load(open("y.pkl", "rb"))
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2021)
 
-    batch_size = 32
+    batch_size = 1
 
     train_data = TensorDataset(X_train, y_train)
     train_sampler = RandomSampler(X_train)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
-    print(y_train)
     test_data = TensorDataset(X_test, y_test)
     test_sampler = SequentialSampler(X_test)
     test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
 
-    model = initialize_model(vocab_size=len(vocab))
-    train(model, train_dataloader, epochs=10)
+    model, optimizer = initialize_model(vocab_size=len(vocab))
+    train(model, optimizer, train_dataloader, epochs=10)
 
+    torch.save(model, "model.pkl")
+    # model = torch.load("model.pkl").to(device)
+
+    probs = eval(model, test_dataloader)
+    # y_pred = torch.argmax(probs, dim=1).numpy()
+    y_pred = probs
+    y_true = y_test.cpu().numpy()
+
+    from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
+    accuracy = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, average='macro')
+    recall = recall_score(y_true, y_pred, average='macro')
+    f1 = f1_score(y_true, y_pred, average='macro')
+
+    print("Accuracy: ", accuracy)
+    print("Precision: ", precision)
+    print("Recall: ", recall)
+    print("macro-F1: ", f1)
 
 
 # base RNN model
