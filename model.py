@@ -18,6 +18,8 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from sklearn.model_selection import train_test_split
 from time import time
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
+import torch.nn.functional as F
 
 # device = torch.device("cpu")
 if torch.cuda.is_available():
@@ -350,12 +352,34 @@ def eval(model, test_dataloader):
     for batch in test_dataloader:
         b_input_ids, b_labels = tuple(t for t in batch)
         y_pred = model(b_input_ids.to(device))
-        y_pred = torch.mean(y_pred, 1)
-        y_pred = torch.argmax(y_pred, dim=1)
+        y_pred = torch.argsort(torch.mean(y_pred, 1), dim=-1, descending=True)[:,:50]
+        # y_pred = torch.argmax(y_pred, dim=1)
         all_logits.append(y_pred.cpu().numpy())
-    import torch.nn.functional as F
     # probs = F.softmax(all_logits, dim=1).cpu()
     return all_logits
+
+def mean_reciprocal_rank(y_true, y_pred_top20_list):
+    mrr = 0
+    for i, label_t in enumerate(y_true):
+        score = 0
+        for j, label_p in enumerate(y_pred_top20_list[i]):
+            if label_t == label_p:
+                score = 1 / (j + 1)
+                break
+        mrr += score
+    return mrr / len(y_true)
+
+def acc_k(y_true, y_pred_top20_list, k):
+    positive_num = 0
+    for i, label_t in enumerate(y_true):
+        cur = 0
+        for j in range(k):
+            if y_pred_top20_list[i][j] == label_t:
+                cur = 1
+                break
+        positive_num += cur
+    return positive_num / len(y_true)
+
 
 if __name__ == '__main__':
     # dps = load_dps()
@@ -373,7 +397,6 @@ if __name__ == '__main__':
     # y = torch.Tensor([seq[1] for seq in dps])
     # y = y.type(torch.LongTensor)
 
-    import pickle
     # pickle.dump(X, open("X.pkl", "wb"))
     # pickle.dump(y, open("y.pkl", "wb"))
     # print("Dumps X, y to disk finished.")
@@ -383,28 +406,25 @@ if __name__ == '__main__':
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2021)
 
-    batch_size = 1
+    batch_size = 2
 
-    train_data = TensorDataset(X_train, y_train)
-    train_sampler = RandomSampler(X_train)
-    train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
+    # train_data = TensorDataset(X_train, y_train)
+    # train_sampler = RandomSampler(X_train)
+    # train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
     test_data = TensorDataset(X_test, y_test)
     test_sampler = SequentialSampler(X_test)
     test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
 
-    model, optimizer = initialize_model(vocab_size=len(vocab))
-    train(model, optimizer, train_dataloader, epochs=10)
+    # model, optimizer = initialize_model(vocab_size=len(vocab))
+    # train(model, optimizer, train_dataloader, epochs=10)
+    #
+    # torch.save(model, "model.pkl")
+    model = torch.load("model.pkl").to(device)
 
-    torch.save(model, "model.pkl")
-    # model = torch.load("model.pkl").to(device)
-
-    probs = eval(model, test_dataloader)
-    # y_pred = torch.argmax(probs, dim=1).numpy()
-    y_pred = probs
+    y_pred = eval(model, test_dataloader)
     y_true = y_test.cpu().numpy()
 
-    from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
     accuracy = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred, average='macro')
     recall = recall_score(y_true, y_pred, average='macro')
