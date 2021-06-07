@@ -384,13 +384,13 @@ def acc_k(y_true, y_pred_top20_list, k):
 if __name__ == '__main__':
     # dps = load_dps()
     # ids = load_ids()
-    vocab = load_vocab()
+    # vocab = load_vocab()
     # vocab_len = len(vocab)
     # vocab_dict = dict(zip(load_vocab(), range(vocab_len)))
     # embed_vocab = [word2vec(word) for word in vocab]
     # embed_vocab_dict = dict(zip(vocab, embed_vocab))
 
-    print("Vocabulary size: " + str(len(vocab)))
+    # print("Vocabulary size: " + str(len(vocab)))
 
     # X = torch.tensor(pad_input_sequence_index([sequence_embedding_index(seq[0], vocab_dict) for seq in dps], \
     #                                          vocab_dict))
@@ -412,18 +412,19 @@ if __name__ == '__main__':
     # train_sampler = RandomSampler(X_train)
     # train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
-    test_data = TensorDataset(X_test, y_test)
-    test_sampler = SequentialSampler(X_test)
-    test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
+    # test_data = TensorDataset(X_test, y_test)
+    # test_sampler = SequentialSampler(X_test)
+    # test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
 
     # model, optimizer = initialize_model(vocab_size=len(vocab))
     # train(model, optimizer, train_dataloader, epochs=10)
     #
     # torch.save(model, "model.pkl")
-    model = torch.load("model.pkl").to(device)
+    # model = torch.load("model.pkl").to(device)
 
-    y_pred = eval(model, test_dataloader)
-    pickle.dump(y_pred, open("y_pred.pkl", "wb"))
+    # y_pred = eval(model, test_dataloader)
+    # pickle.dump(y_pred, open("y_pred.pkl", "wb"))
+    y_pred = pickle.load(open("y_pred.pkl", "rb"))
     y_true = y_test.cpu().numpy()
 
     # accuracy = accuracy_score(y_true, y_pred)
