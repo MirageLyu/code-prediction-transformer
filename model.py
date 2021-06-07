@@ -423,18 +423,32 @@ if __name__ == '__main__':
     model = torch.load("model.pkl").to(device)
 
     y_pred = eval(model, test_dataloader)
+    pickle.dump(y_pred, open("y_pred.pkl", "wb"))
     y_true = y_test.cpu().numpy()
 
-    accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, average='macro')
-    recall = recall_score(y_true, y_pred, average='macro')
-    f1 = f1_score(y_true, y_pred, average='macro')
+    # accuracy = accuracy_score(y_true, y_pred)
+    # precision = precision_score(y_true, y_pred, average='macro')
+    # recall = recall_score(y_true, y_pred, average='macro')
+    # f1 = f1_score(y_true, y_pred, average='macro')
+    #
+    # print("Accuracy: ", accuracy)
+    # print("Precision: ", precision)
+    # print("Recall: ", recall)
+    # print("macro-F1: ", f1)
 
-    print("Accuracy: ", accuracy)
-    print("Precision: ", precision)
-    print("Recall: ", recall)
-    print("macro-F1: ", f1)
+    mrr = mean_reciprocal_rank(y_true, y_pred)
+    top1 = acc_k(y_true, y_pred, 1)
+    top3 = acc_k(y_true, y_pred, 3)
+    top5 = acc_k(y_true, y_pred, 5)
+    top10 = acc_k(y_true, y_pred, 10)
+    top20 = acc_k(y_true, y_pred, 20)
 
+    print("mrr: ", mrr)
+    print("top1: ", top1)
+    print("top3: ", top3)
+    print("top5: ", top5)
+    print("top10: ", top10)
+    print("top20: ", top20)
 
 # base RNN model
 class LSTMModel(torch.nn.Module):
